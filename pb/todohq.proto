@@ -3,13 +3,17 @@ syntax = "proto3";
 package todohq;
 
 import "google/protobuf/timestamp.proto";
-
+import "google/api/annotations.proto";
 // ---------------Todo----------------
 
 service TodoService {
-    rpc ListTodos(Empty) returns (ListTodosResponse) {}
-    rpc GetTodo(GetTodoRequest) returns (Todo) {}
-    rpc FilterTodos(FilterTodosRequest) returns (FilterTodosResponse) {}
+    rpc GetTodo(GetTodoRequest) returns (Todo) {
+        option (google.api.http) = {
+            get: "/v1/todo/{id}"
+        };
+    }
+    rpc FilterTodos(FilterTodosRequest) returns (FilterTodosResponse) {
+    }
     rpc Create(CreateRequest) returns(CreateResponse) {}
     rpc Update(UpdateRequest) returns(UpdateResponse) {}
 }
@@ -29,10 +33,10 @@ message Todo {
     google.protobuf.Timestamp reminder = 4;
 
     string ownerId = 5;
-}
 
-message ListTodosResponse {
-    repeated Todo todos = 1;
+    bool completed = 6;
+    
+    google.protobuf.Timestamp updatedAt = 7;
 }
 
 message GetTodoRequest {
@@ -41,6 +45,11 @@ message GetTodoRequest {
 
 message FilterTodosRequest {
     string ownerId = 1;
+    bool hasCompleted = 2;
+    bool completedValue = 3;
+
+    string reminderQueryOpValue = 5; 
+    google.protobuf.Timestamp reminderQueryValue = 7;
 }
 
 message FilterTodosResponse {
@@ -69,6 +78,9 @@ message UpdateRequest{
 
     bool hasReminder = 6;
     google.protobuf.Timestamp reminderValue = 7;
+
+    bool hasCompleted = 8;
+    bool completedValue = 9;
 }
 
 message UpdateResponse{

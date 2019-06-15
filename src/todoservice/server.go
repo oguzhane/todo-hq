@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -11,31 +10,21 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
-
-	"github.com/golang/protobuf/ptypes/timestamp"
-
 	pb "github.com/oguzhane/todo-hq/src/todoservice/genproto"
+
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"cloud.google.com/go/profiler"
+	"contrib.go.opencensus.io/exporter/jaeger"
 	"contrib.go.opencensus.io/exporter/stackdriver"
 	"github.com/sirupsen/logrus"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.opencensus.io/exporter/jaeger"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc"
-
-	codecs "github.com/amsokol/mongo-go-driver-protobuf"
 )
 
 var (
-	cat          pb.ListTodosResponse
 	catalogMutex *sync.Mutex
 	log          *logrus.Logger
 	extraLatency time.Duration
@@ -110,12 +99,28 @@ func run(port string) string {
 		log.Fatal(err)
 	}
 	srv := grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
-	svc := &todo{}
+	svc := &TodoServiceServer{}
 	pb.RegisterTodoServiceServer(srv, svc)
-
+	InitDb(dburi)
 	healthpb.RegisterHealthServer(srv, svc)
 	go srv.Serve(l)
 	return l.Addr().String()
+}
+
+func runRestApi() {
+	// ctx := context.Background()
+	// ctx, cancel := context.WithCancel(ctx)
+	// defer cancel()
+
+	// mux := runtime.NewServeMux()
+	// opts := []grpc.DialOption{grpc.WithInsecure()}
+
+	// RegisterYourServiceHandlerFromEndpoint(ctx, mux, nil, opts)
+	// if err != nil {
+	// 	return err
+	// }
+
+	// return http.ListenAndServe(":8080", mux)
 }
 
 func initJaegerTracing() {
@@ -197,216 +202,4 @@ func initProfiling(service, version string) {
 		time.Sleep(d)
 	}
 	log.Warn("could not initialize Stackdriver profiler after retrying, giving up")
-}
-
-type todo struct{}
-
-func (t *todo) ListTodos(context.Context, *pb.Empty) (*pb.ListTodosResponse, error) {
-	time.Sleep(extraLatency)
-	t1 := &pb.Todo{
-		Id:          "1",
-		Title:       "Title-1",
-		Description: "Description-1",
-		Reminder: &timestamp.Timestamp{
-			Seconds: 1000,
-			Nanos:   1000,
-		},
-	}
-	t2 := &pb.Todo{
-		Id:          "2",
-		Title:       "Title-2",
-		Description: "Description-2",
-		Reminder: &timestamp.Timestamp{
-			Seconds: 1000,
-			Nanos:   1000,
-		},
-	}
-	result := []*pb.Todo{
-		t1,
-		t2,
-	}
-
-	return &pb.ListTodosResponse{Todos: result}, nil
-}
-
-func (t *todo) GetTodo(ctx context.Context, r *pb.GetTodoRequest) (*pb.Todo, error) {
-	db, ctx, err := getDb(ctx)
-	if err != nil {
-		return nil, err
-	}
-	todos := db.Collection("todos")
-
-	objectIDS, err := primitive.ObjectIDFromHex(r.Id)
-	if err != nil {
-		return nil, err
-	}
-
-	idDoc := bson.D{{"_id", objectIDS}}
-	elem := &bson.D{}
-	err = todos.FindOne(ctx, idDoc).Decode(elem)
-
-	if err != nil {
-		return nil, err
-	}
-	m := elem.Map()
-
-	ts := dataTimeToTime(m["reminder"].(primitive.DateTime))
-	rem, _ := ptypes.TimestampProto(ts)
-
-	return &pb.Todo{
-		Id:          m["_id"].(primitive.ObjectID).Hex(),
-		Title:       m["title"].(string),
-		Description: m["description"].(string),
-		Reminder:    rem,
-	}, nil
-}
-
-func (t *todo) FilterTodos(ctx context.Context, r *pb.FilterTodosRequest) (*pb.FilterTodosResponse, error) {
-	db, ctx, err := getDb(ctx)
-	if err != nil {
-		return nil, err
-	}
-	todos := db.Collection("todos")
-
-	c, err := todos.Find(ctx, bson.M{"ownerId": r.OwnerId})
-	if err != nil {
-		return nil, err
-	}
-	defer c.Close(ctx)
-	resp := &pb.FilterTodosResponse{
-		Results: []*pb.Todo{},
-	}
-
-	for c.Next(ctx) {
-		elem := &bson.D{}
-		if err = c.Decode(elem); err != nil {
-			return nil, err
-		}
-		m := elem.Map()
-		// ts :=
-		ts := dataTimeToTime(m["reminder"].(primitive.DateTime))
-		// tt := ts.Time()
-
-		rem, _ := ptypes.TimestampProto(ts)
-		t := &pb.Todo{
-			Id:          m["_id"].(primitive.ObjectID).Hex(),
-			Title:       m["title"].(string),
-			Description: m["description"].(string),
-			Reminder:    rem,
-		}
-		resp.Results = append(resp.Results, t)
-	}
-	if err = c.Err(); err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
-func dataTimeToTime(dt primitive.DateTime) time.Time {
-	return time.Unix(0, int64(dt)*int64(time.Millisecond))
-}
-
-func getDb(c context.Context) (*mongo.Database, context.Context, error) {
-	reg := codecs.Register(bson.NewRegistryBuilder()).Build()
-
-	client, err := mongo.NewClient(options.Client().ApplyURI(dburi).SetRegistry(reg))
-	if err != nil {
-		return nil, nil, err
-	}
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	err = client.Connect(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	return client.Database("master"), ctx, nil
-}
-
-func (t *todo) Create(c context.Context, r *pb.CreateRequest) (*pb.CreateResponse, error) {
-	db, ctx, err := getDb(c)
-	if err != nil {
-		return nil, err
-	}
-	r.Todo.Reminder.Nanos = 0
-	// x := ptypes.TimestampProto(t)
-	todos := db.Collection("todos")
-	res, err := todos.InsertOne(ctx, bson.M{"title": r.Todo.Title, "description": r.Todo.Description,
-		"ownerId":  r.Todo.OwnerId,
-		"reminder": r.Todo.Reminder,
-		// "reminder": primitive.Timestamp{
-		// 	T: r.Todo.Reminder.Seconds,
-		// 	I: r.Todo.Reminder.Nanos,
-		// },
-		// "reminder": bson.M{
-		// 	"seconds": r.Todo.Reminder.Seconds,
-		// 	"nanos":   r.Todo.Reminder.Nanos,
-		// }
-	})
-	return &pb.CreateResponse{
-		Id: res.InsertedID.(primitive.ObjectID).Hex(),
-	}, err
-}
-
-func (t *todo) Update(ctx context.Context, r *pb.UpdateRequest) (*pb.UpdateResponse, error) {
-	db, ctx, err := getDb(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	objectIDS, err := primitive.ObjectIDFromHex(r.GetId())
-	if err != nil {
-		return nil, err
-	}
-	idDoc := bson.D{{"_id", objectIDS}}
-	todos := db.Collection("todos")
-
-	updateDoc := bson.M{}
-	updateDoc["_id"] = objectIDS
-	// fmt.Println(r)
-	if r.GetHasTitle() {
-		updateDoc["title"] = r.GetTitleValue()
-	}
-	if r.GetHasDescription() {
-		updateDoc["description"] = r.GetDescriptionValue()
-	}
-	if r.GetHasReminder() {
-		updateDoc["reminder"] = r.GetReminderValue()
-	}
-	// fmt.Println(updateDoc)
-	var after options.ReturnDocument = options.After
-	res := todos.FindOneAndUpdate(ctx, idDoc, bson.D{
-		{"$set", updateDoc},
-	}, &options.FindOneAndUpdateOptions{
-		ReturnDocument: &after,
-	})
-	if err = res.Err(); err != nil {
-		return nil, err
-	}
-
-	elem := &bson.D{}
-	err = todos.FindOne(ctx, idDoc).Decode(elem)
-
-	if err != nil {
-		return nil, err
-	}
-	m := elem.Map()
-
-	ts := dataTimeToTime(m["reminder"].(primitive.DateTime))
-	rem, _ := ptypes.TimestampProto(ts)
-
-	return &pb.UpdateResponse{
-		Todo: &pb.Todo{
-			Id:          m["_id"].(primitive.ObjectID).Hex(),
-			Title:       m["title"].(string),
-			Description: m["description"].(string),
-			Reminder:    rem,
-		},
-	}, nil
-}
-
-func (*todo) Check(ctx context.Context, req *healthpb.HealthCheckRequest) (*healthpb.HealthCheckResponse, error) {
-	return &healthpb.HealthCheckResponse{Status: healthpb.HealthCheckResponse_SERVING}, nil
-}
-
-func (*todo) Watch(*healthpb.HealthCheckRequest, healthpb.Health_WatchServer) error {
-	return nil
 }
