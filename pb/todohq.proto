@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package todohq;
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------Todo----------------
+
+service TodoService {
+    rpc ListTodos(Empty) returns (ListTodosResponse) {}
+    rpc GetTodo(GetTodoRequest) returns (Todo) {}
+    rpc FilterTodos(FilterTodosRequest) returns (FilterTodosResponse) {}
+    rpc Create(CreateRequest) returns(CreateResponse) {}
+    rpc Update(UpdateRequest) returns(UpdateResponse) {}
+}
+
+
+message Todo {
+
+    string id = 1;
+
+
+    string title = 2;
+
+
+    string description = 3;
+
+
+    google.protobuf.Timestamp reminder = 4;
+
+    string ownerId = 5;
+}
+
+message ListTodosResponse {
+    repeated Todo todos = 1;
+}
+
+message GetTodoRequest {
+    string id = 1;
+}
+
+message FilterTodosRequest {
+    string ownerId = 1;
+}
+
+message FilterTodosResponse {
+    repeated Todo results = 1;
+}
+
+message CreateRequest{
+
+    Todo todo = 1;
+}
+
+
+message CreateResponse{
+
+    string id = 1;
+}
+
+message UpdateRequest{
+    string id = 1;
+
+    bool hasTitle = 2;
+    string titleValue = 3;
+
+    bool hasDescription = 4;
+    string descriptionValue = 5;
+
+    bool hasReminder = 6;
+    google.protobuf.Timestamp reminderValue = 7;
+}
+
+message UpdateResponse{
+    Todo todo = 2;
+}
+
+message Empty {}
+
+// ---------------User----------------
+
+service UserService {
+    rpc Create(User) returns (UserResponse) {}
+    rpc Get(User) returns (UserResponse) {}
+    rpc Auth(User) returns (Token) {}
+    rpc ValidateToken(Token) returns (Token) {}
+}
+
+message User {
+    string id = 1;
+    string name = 2;
+    string email = 3;
+    string password = 4;
+}
+
+message UserResponse {
+    User user = 1;
+}
+
+message Token {
+    string token = 1;
+    bool valid = 2;
+}
